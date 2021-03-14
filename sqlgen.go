@@ -5,7 +5,6 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
-	_ "github.com/go-sql-driver/mysql"
 	"io"
 	"io/ioutil"
 	"os"
@@ -14,7 +13,15 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+
+	_ "github.com/denisenkom/go-mssqldb"
+	_ "github.com/go-sql-driver/mysql"
 )
+
+// go build sqlgen.go之前，請先go get github.com/denisenkom/go-mssqldb 和 go get github.com/go-sql-driver/mysql
+// https://docs.microsoft.com/zh-tw/azure/azure-sql/database/connect-query-go
+var DB_DBMS, DB_HOST, DB_PORT, DB_NAME, TABLE_NAME, DB_USER, DB_PASSWORD, ENTRY_DIR string
+var connString string
 
 type Doc struct {
 	Id    string `json:"id"`
@@ -93,51 +100,74 @@ func sqlBuilder(docs []Doc, sql *[]string, mutex *sync.Mutex) {
 	}
 }
 
-func saveToDb(sqlString []string, db *sql.DB) {
-	sqlStr := "INSERT INTO test (`id`, `url`, `title`, `text`) VALUES "
+func saveToMySQLDb(tablename string, sqlString []string, db *sql.DB) {
 
+	sqlStr := "INSERT INTO " + tablename + " (`id`, `url`, `title`, `text`) VALUES "
 	sqlStr += strings.Join(sqlString, ",") + ";"
+
 	_, err := db.Exec(sqlStr)
 	if err != nil {
 		panic(err)
 	}
 	fmt.Println("commit...")
+
+}
+
+func saveToSQLServerDb(tablename string, sqlString []string, db *sql.DB) {
+
+	sqlStr := "INSERT INTO " + tablename + " (id, url, title, text) VALUES "
+	sqlStr += strings.Join(sqlString, ",") + ";"
+
+	_, err := db.Exec(sqlStr)
+	if err != nil {
+		panic(err)
+	}
+	fmt.Println("commit...")
+
 }
 
 func main() {
-	var (
-		DB_HOST    = "localhost"
-		DB_PORT    = "3306"
-		DEFAULT_DB = "test"
-		DB_PASSWORD,
-		ENTRY_DIR  string
-	)
+
 	args := os.Args[1:]
 	for i := 0; i < len(args); i++ {
 		currArg := args[i]
 
-		if currArg == "-h" || currArg == "-P" || currArg == "-p" || currArg == "-t" {
+		if currArg == "-dbms" || currArg == "-dbip" || currArg == "-dbport" || currArg == "-dbuser" || currArg == "-dbpwd" || currArg == "-dbname" || currArg == "-tablename" || currArg == "-textpath" {
 			i++
 			if i >= len(args) {
 				panic("insufficient argument")
 			}
 		}
-		if currArg == "-h" {
+		if currArg == "-dbms" {
+			DB_DBMS = args[i]
+		} else if currArg == "-dbip" {
 			DB_HOST = args[i]
-		} else if currArg == "-P" {
+		} else if currArg == "-dbport" {
 			DB_PORT = args[i]
-		} else if currArg == "-p" {
+		} else if currArg == "-dbuser" {
+			DB_USER = args[i]
+		} else if currArg == "-dbpwd" {
 			DB_PASSWORD = args[i]
-		} else if currArg == "-t" {
-			DEFAULT_DB = args[i]
-		} else {
-			ENTRY_DIR = currArg
+		} else if currArg == "-dbname" {
+			DB_NAME = args[i]
+		} else if currArg == "-tablename" {
+			TABLE_NAME = args[i]
+		} else if currArg == "-textpath" {
+			ENTRY_DIR = args[i]
 		}
 	}
-	dbSource := fmt.Sprintf("root:%s@tcp(%s:%s)"+
-		"/%s?timeout=90s&collation=utf8mb4_unicode_ci",
-		DB_PASSWORD, DB_HOST, DB_PORT, DEFAULT_DB)
-	fmt.Println(dbSource)
+	if DB_DBMS == "MSSQL" {
+		connString = fmt.Sprintf("server=%s;user id=%s;password=%s;port=%s;database=%s;",
+			DB_HOST, DB_USER, DB_PASSWORD, DB_PORT, DB_NAME)
+
+		fmt.Println(connString)
+	} else if DB_DBMS == "MYSQL" {
+		connString = fmt.Sprintf("%s:%s@tcp(%s:%s)"+
+			"/%s?timeout=90s&collation=utf8mb4_unicode_ci",
+			DB_USER, DB_PASSWORD, DB_HOST, DB_PORT, DB_NAME)
+
+		fmt.Println(connString)
+	}
 
 	files := getFilePathFromDir(ENTRY_DIR)
 	sqlString := make([]string, 0)
@@ -172,8 +202,9 @@ func main() {
 		readDone = true
 	}()
 
-	save := func() {
-		db, err := sql.Open("mysql", dbSource)
+	saveToMySQL := func() {
+		db, err := sql.Open("mysql", connString)
+
 		if err != nil {
 			panic(err)
 		}
@@ -186,12 +217,12 @@ func main() {
 				tmp = sqlString[:100]
 				sqlString = sqlString[100:]
 				mutex.Unlock()
-				saveToDb(tmp, db)
+				saveToMySQLDb(TABLE_NAME, tmp, db)
 			} else if readDone {
 				tmp = sqlString[:]
 				sqlString = sqlString[:0]
 				mutex.Unlock()
-				saveToDb(tmp, db)
+				saveToMySQLDb(TABLE_NAME, tmp, db)
 			} else {
 				mutex.Unlock()
 				runtime.Gosched()
@@ -199,8 +230,42 @@ func main() {
 		}
 		wg.Done()
 	}
+
+	saveToSQLServer := func() {
+		db, err := sql.Open("sqlserver", connString)
+
+		if err != nil {
+			panic(err)
+		}
+		defer db.Close()
+
+		tmp := make([]string, 0)
+		for !(readDone && len(sqlString) == 0) {
+			mutex.Lock()
+			if len(sqlString) > 100 {
+				tmp = sqlString[:100]
+				sqlString = sqlString[100:]
+				mutex.Unlock()
+				saveToSQLServerDb(TABLE_NAME, tmp, db)
+			} else if readDone {
+				tmp = sqlString[:]
+				sqlString = sqlString[:0]
+				mutex.Unlock()
+				saveToSQLServerDb(TABLE_NAME, tmp, db)
+			} else {
+				mutex.Unlock()
+				runtime.Gosched()
+			}
+		}
+		wg.Done()
+	}
+
 	for i := 0; i < 3; i++ {
-		go save()
+		if DB_DBMS == "MYSQL" {
+			go saveToMySQL()
+		} else if DB_DBMS == "MSSQL" {
+			go saveToSQLServer()
+		}
 	}
 	wg.Wait()
 }

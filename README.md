@@ -4,9 +4,10 @@
 ## To use this, please first execute the following sql.
 
 ```
-CREATE DATABASE demo;
-USE demo;
-CREATE TABLE IF NOT EXISTS test (
+--MySQL
+CREATE DATABASE wikidump;
+USE wikidump;
+CREATE TABLE IF NOT EXISTS PagesArticles (
   `id`    int not null auto_increment,
   `url`   varchar(255),
   `title` varchar(255),
@@ -14,21 +15,36 @@ CREATE TABLE IF NOT EXISTS test (
   FULLTEXT `fulltext_index` (`title`, `text`),
   primary key (`id`)
 ) ENGINE = InnoDB CHARACTER SET = utf8mb4;
+
+--SQL Server
+CREATE TABLE [dbo].[PagesArticles](
+	[id] [int] IDENTITY(1,1) NOT NULL,
+	[url] [varchar](255) NULL,
+	[title] [varchar](255) NULL,
+	[text] [text] NULL,
+PRIMARY KEY CLUSTERED 
+(
+	[id] ASC
+)WITH (PAD_INDEX = OFF, STATISTICS_NORECOMPUTE = OFF, IGNORE_DUP_KEY = OFF, ALLOW_ROW_LOCKS = ON, ALLOW_PAGE_LOCKS = ON, OPTIMIZE_FOR_SEQUENTIAL_KEY = OFF) ON [PRIMARY]
+) ON [PRIMARY] TEXTIMAGE_ON [PRIMARY]
+GO
+
 ```
 
-You can create init.sql and then use command line tool as follows.
+## Import Database Connection Driver
+go get github.com/go-sql-driver/mysql
+go get github.com/denisenkom/go-mssqldb
 
-`mysql -u [host] -P [port] -u"[user]" -p"[password]" < init.sql`
-
-And then follow the instructions from the article.
-
-**You can find the binary files [here](https://github.com/qq52184962/sqlgen/releases).** 
-
-Or build your own, if you have golang sdk.
+## Build
+go build sqlgen.go
 
 ## Usage
-`./sqlgen -h [host] -P [port] -p [password] -t [text_dir]`
+`./sqlgen -dbms [MYSQL/MSSQL] -dbip [DBIP] -dbport [port] -dbuser [DBUSER] -dbpwd [password]  -dbname [DBName] -tablename [DBTable] -textpath [wiki_file_dir]`
 
-**Example**
+**Example(MySQL、Linux Path)**
 
-`./sqlgen -h localhost -P 3306 -p mypassword -t ./wikiextractor/text`
+`./sqlgen -dbms MYSQL -dbip 127.0.0.1 -dbport 3306 -dbuser sqluser -dbpwd sqlpassword -dbname wikidump -tablename PagesArticles -textpath /wikidump/rawdata/text`
+
+**Example(SQL Server、Windows Path)**
+
+`./sqlgen -dbms MSSQL -dbip 127.0.0.1 -dbport 1433 -dbuser sqluser -dbpwd sqlpassword -dbname wikidump -tablename PagesArticles -textpath D:\wikidump\text`
